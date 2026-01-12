@@ -112,6 +112,7 @@ export interface WorkersResolvedConfig extends BaseResolvedConfig {
 	configPaths: Set<string>;
 	cloudflareEnv: string | undefined;
 	environmentNameToWorkerMap: Map<string, Worker>;
+	environmentNameToChildEnvironmentNamesMap: Map<string, string[]>;
 	entryWorkerEnvironmentName: string;
 	staticRouting: StaticRouting | undefined;
 	rawConfigs: {
@@ -338,6 +339,16 @@ export function resolvePluginConfig(
 		[entryWorkerEnvironmentName, resolveWorker(entryWorkerConfig)],
 	]);
 
+	const environmentNameToChildEnvironmentNamesMap = new Map<string, string[]>();
+	const entryWorkerChildEnvironments =
+		pluginConfig.viteEnvironment?.childEnvironments;
+	if (entryWorkerChildEnvironments) {
+		environmentNameToChildEnvironmentNamesMap.set(
+			entryWorkerEnvironmentName,
+			entryWorkerChildEnvironments
+		);
+	}
+
 	const auxiliaryWorkersResolvedConfigs: WorkerResolvedConfig[] = [];
 
 	for (const auxiliaryWorker of pluginConfig.auxiliaryWorkers ?? []) {
@@ -374,6 +385,15 @@ export function resolvePluginConfig(
 			workerEnvironmentName,
 			resolveWorker(workerResolvedConfig.config as ResolvedWorkerConfig)
 		);
+
+		const auxiliaryWorkerChildEnvironments =
+			auxiliaryWorker.viteEnvironment?.childEnvironments;
+		if (auxiliaryWorkerChildEnvironments) {
+			environmentNameToChildEnvironmentNamesMap.set(
+				workerEnvironmentName,
+				auxiliaryWorkerChildEnvironments
+			);
+		}
 	}
 
 	return {
@@ -382,6 +402,7 @@ export function resolvePluginConfig(
 		cloudflareEnv,
 		configPaths,
 		environmentNameToWorkerMap,
+		environmentNameToChildEnvironmentNamesMap,
 		entryWorkerEnvironmentName,
 		staticRouting,
 		remoteBindings: pluginConfig.remoteBindings ?? true,
