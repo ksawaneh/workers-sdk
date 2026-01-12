@@ -25,7 +25,7 @@ import type { Unstable_Config } from "wrangler";
 export type PersistState = boolean | { path: string };
 
 interface BaseWorkerConfig {
-	viteEnvironment?: { name?: string };
+	viteEnvironment?: { name?: string; childEnvironments?: string[] };
 }
 
 interface EntryWorkerConfig extends BaseWorkerConfig {
