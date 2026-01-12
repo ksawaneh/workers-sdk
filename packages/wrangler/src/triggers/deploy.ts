@@ -17,7 +17,6 @@ import { isNonInteractiveOrCI } from "../is-interactive";
 import { logger } from "../logger";
 import { ensureQueuesExistByConfig } from "../queues/client";
 import { getWorkersDevSubdomain } from "../routes";
-import { retryOnAPIFailure } from "../utils/retry";
 import { getZoneForRoute } from "../zones";
 import type { AssetsOptions } from "../assets";
 import type { RouteObject } from "../deploy/deploy";
@@ -147,12 +146,10 @@ export default async function triggersDeploy(
 
 					let routesInZone = zoneRoutesCache.get(zone.id);
 					if (!routesInZone) {
-						routesInZone = retryOnAPIFailure(() =>
-							fetchListResult<{
-								pattern: string;
-								script: string;
-							}>(config, `/zones/${zone.id}/workers/routes`)
-						);
+						routesInZone = fetchListResult<{
+							pattern: string;
+							script: string;
+						}>(config, `/zones/${zone.id}/workers/routes`);
 						zoneRoutesCache.set(zone.id, routesInZone);
 					}
 
@@ -462,22 +459,21 @@ async function subdomainDeploy(
 	// Occasionally this update to the subdomain endpoint fails due to some internal API error,
 	// we retry this request a few times to mitigate that.
 
-	const after = await retryOnAPIFailure(async () =>
-		fetchResult<{
-			enabled: boolean;
-			previews_enabled: boolean;
-		}>(config, `${workerUrl}/subdomain`, {
-			method: "POST",
-			body: JSON.stringify({
-				enabled: wantWorkersDev,
-				previews_enabled: wantPreviews,
-			}),
-			headers: {
-				"Content-Type": "application/json",
-				"Cloudflare-Workers-Script-Api-Date": "2025-08-01",
-			},
-		})
-	);
+	// Note: This request automatically retries on 429/5xx via performApiFetch
+	const after = await fetchResult<{
+		enabled: boolean;
+		previews_enabled: boolean;
+	}>(config, `${workerUrl}/subdomain`, {
+		method: "POST",
+		body: JSON.stringify({
+			enabled: wantWorkersDev,
+			previews_enabled: wantPreviews,
+		}),
+		headers: {
+			"Content-Type": "application/json",
+			"Cloudflare-Workers-Script-Api-Date": "2025-08-01",
+		},
+	});
 
 	// Warn about mismatching config and current values.
 

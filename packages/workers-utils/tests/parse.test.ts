@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	APIError,
 	indexLocation,
 	parseByteSize,
 	parseJSON,
@@ -402,5 +403,107 @@ describe("parseByteSize", () => {
 		expect(parseByteSize(".B")).toBeNaN();
 		expect(parseByteSize("3iB")).toBeNaN();
 		expect(parseByteSize("3ib")).toBeNaN();
+	});
+});
+
+describe("APIError", () => {
+	describe("status getter", () => {
+		it("should return the status code", () => {
+			const error = new APIError({ text: "test", status: 429 });
+			expect(error.status).toBe(429);
+		});
+
+		it("should return undefined when no status provided", () => {
+			const error = new APIError({ text: "test" });
+			expect(error.status).toBeUndefined();
+		});
+	});
+
+	describe("retryAfter getter", () => {
+		it("should return the retryAfter value", () => {
+			const error = new APIError({ text: "test", status: 429, retryAfter: 30 });
+			expect(error.retryAfter).toBe(30);
+		});
+
+		it("should return undefined when no retryAfter provided", () => {
+			const error = new APIError({ text: "test", status: 429 });
+			expect(error.retryAfter).toBeUndefined();
+		});
+	});
+
+	describe("isRateLimited", () => {
+		it("should return true for 429 status", () => {
+			const error = new APIError({ text: "test", status: 429 });
+			expect(error.isRateLimited()).toBe(true);
+		});
+
+		it("should return false for non-429 status", () => {
+			expect(new APIError({ text: "test", status: 500 }).isRateLimited()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test", status: 400 }).isRateLimited()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test" }).isRateLimited()).toBe(false);
+		});
+	});
+
+	describe("isRetryable", () => {
+		it("should return true for 429 rate limit", () => {
+			const error = new APIError({ text: "test", status: 429 });
+			expect(error.isRetryable()).toBe(true);
+		});
+
+		it("should return true for 5xx server errors", () => {
+			expect(new APIError({ text: "test", status: 500 }).isRetryable()).toBe(
+				true
+			);
+			expect(new APIError({ text: "test", status: 502 }).isRetryable()).toBe(
+				true
+			);
+			expect(new APIError({ text: "test", status: 503 }).isRetryable()).toBe(
+				true
+			);
+			expect(new APIError({ text: "test", status: 504 }).isRetryable()).toBe(
+				true
+			);
+		});
+
+		it("should return false for other 4xx errors", () => {
+			expect(new APIError({ text: "test", status: 400 }).isRetryable()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test", status: 401 }).isRetryable()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test", status: 403 }).isRetryable()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test", status: 404 }).isRetryable()).toBe(
+				false
+			);
+		});
+
+		it("should return false when no status provided", () => {
+			const error = new APIError({ text: "test" });
+			expect(error.isRetryable()).toBe(false);
+		});
+	});
+
+	describe("isGatewayError", () => {
+		it("should return true for 524 status", () => {
+			const error = new APIError({ text: "test", status: 524 });
+			expect(error.isGatewayError()).toBe(true);
+		});
+
+		it("should return false for other statuses", () => {
+			expect(new APIError({ text: "test", status: 500 }).isGatewayError()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test", status: 429 }).isGatewayError()).toBe(
+				false
+			);
+			expect(new APIError({ text: "test" }).isGatewayError()).toBe(false);
+		});
 	});
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { setTimeout } from "node:timers/promises";
 import {
 	APIError,
 	getCloudflareApiBaseUrl,
@@ -11,7 +12,18 @@ import { fetch, FormData, Headers, Request, Response } from "undici";
 import { version as wranglerVersion } from "../../package.json";
 import { logger } from "../logger";
 import { loginOrRefreshIfRequired, requireApiToken } from "../user";
+import {
+	calculateBackoff,
+	DEFAULT_BACKOFF,
+	DEFAULT_BASE_DELAY_MS,
+	DEFAULT_MAX_RETRIES,
+	isRetryableStatus,
+	logRetryAttempt,
+	MAX_DELAY_MS,
+	parseRetryAfter,
+} from "./retry";
 import type { ApiCredentials } from "../user";
+import type { RetryConfig } from "./retry";
 import type { ComplianceConfig } from "@cloudflare/workers-utils";
 import type { URLSearchParams } from "node:url";
 import type { HeadersInit, RequestInfo, RequestInit } from "undici";
@@ -26,13 +38,10 @@ async function logRequest(request: Request, init?: RequestInit) {
 	);
 
 	logger.debugWithSanitization("INIT:", JSON.stringify({ ...init }, null, 2));
+	// Note: We don't log FormData bodies because consuming the stream
+	// would corrupt the body for the actual request
 	if (request.body instanceof FormData) {
-		logger.debugWithSanitization(
-			"BODY:",
-			await new Response(request.body).text(),
-			null,
-			2
-		);
+		logger.debug("BODY: [FormData - not logged to preserve stream]");
 	}
 	logger.debug("-- END CF API REQUEST");
 }
@@ -85,6 +94,13 @@ export function createCloudflareClient(complianceConfig: ComplianceConfig) {
  * performApiFetch does everything required to make a CF API request,
  * but doesn't parse the response as JSON. For normal V4 API responses,
  * use `fetchInternal`
+ *
+ * Includes automatic retry with exponential backoff for:
+ * - HTTP 429 (rate limit) responses
+ * - HTTP 5xx (server error) responses
+ * - Network errors (TypeError from fetch)
+ *
+ * Respects Retry-After headers when present.
  * */
 export async function performApiFetch(
 	complianceConfig: ComplianceConfig,
@@ -92,8 +108,16 @@ export async function performApiFetch(
 	init: RequestInit = {},
 	queryParams?: URLSearchParams,
 	abortSignal?: AbortSignal,
-	apiToken?: ApiCredentials
+	apiToken?: ApiCredentials,
+	retryConfig: RetryConfig = {}
 ) {
+	const {
+		maxRetries = DEFAULT_MAX_RETRIES,
+		backoffStrategy = DEFAULT_BACKOFF,
+		baseDelayMs = DEFAULT_BASE_DELAY_MS,
+		maxDelayMs = MAX_DELAY_MS,
+	} = retryConfig;
+
 	const method = init.method ?? "GET";
 	assert(
 		resource.startsWith("/"),
@@ -107,31 +131,101 @@ export async function performApiFetch(
 	maybeAddTraceHeader(headers);
 
 	const queryString = queryParams ? `?${queryParams.toString()}` : "";
-	logger.debug(
-		`-- START CF API REQUEST: ${method} ${getCloudflareApiBaseUrl(complianceConfig)}${resource}`
-	);
+	const url = `${getCloudflareApiBaseUrl(complianceConfig)}${resource}${queryString}`;
+
+	// Log request details once (not on every retry attempt)
+	logger.debug(`-- START CF API REQUEST: ${method} ${url}`);
 	logger.debugWithSanitization("QUERY STRING:", queryString);
 	logHeaders(headers);
-
 	logger.debugWithSanitization("INIT:", JSON.stringify({ ...init }, null, 2));
-	if (init.body instanceof FormData) {
-		logger.debugWithSanitization(
-			"BODY:",
-			await new Response(init.body).text(),
-			null,
-			2
-		);
+	// Note: We don't log FormData bodies here because consuming the stream
+	// would corrupt the body for the actual request
+	if (init.body && !(init.body instanceof FormData)) {
+		logger.debug("BODY: [non-FormData body]");
+	} else if (init.body instanceof FormData) {
+		logger.debug("BODY: [FormData - not logged to preserve stream]");
 	}
 	logger.debug("-- END CF API REQUEST");
-	return await fetch(
-		`${getCloudflareApiBaseUrl(complianceConfig)}${resource}${queryString}`,
-		{
-			method,
-			...init,
-			headers,
-			signal: abortSignal,
+
+	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		if (attempt > 1) {
+			logger.debug(
+				`-- RETRY CF API REQUEST (attempt ${attempt}/${maxRetries}): ${method} ${url}`
+			);
 		}
-	);
+
+		try {
+			const response = await fetch(url, {
+				method,
+				...init,
+				headers,
+				signal: abortSignal,
+			});
+
+			// Check if we should retry based on status code
+			if (isRetryableStatus(response.status) && attempt < maxRetries) {
+				// Consume and discard response body to free resources
+				await response.body?.cancel();
+
+				const retryAfter = parseRetryAfter(response.headers.get("Retry-After"));
+				const delay = calculateBackoff(
+					attempt,
+					backoffStrategy,
+					baseDelayMs,
+					maxDelayMs,
+					retryAfter
+				);
+
+				logRetryAttempt(response.status, attempt, maxRetries, delay);
+
+				// Use abort signal with setTimeout to allow cancellation during delay
+				try {
+					await setTimeout(delay, undefined, { signal: abortSignal });
+				} catch (err) {
+					// If aborted during delay, throw the abort error
+					if (abortSignal?.aborted) {
+						throw new DOMException("Aborted", "AbortError");
+					}
+					throw err;
+				}
+				continue;
+			}
+
+			return response;
+		} catch (err) {
+			// If aborted, don't retry
+			if (abortSignal?.aborted) {
+				throw err;
+			}
+
+			// Retry on network errors (TypeError from fetch)
+			if (err instanceof TypeError && attempt < maxRetries) {
+				const delay = calculateBackoff(
+					attempt,
+					backoffStrategy,
+					baseDelayMs,
+					maxDelayMs
+				);
+				logger.debug(
+					`Network error. Retrying in ${Math.round(delay)}ms (attempt ${attempt}/${maxRetries})...`
+				);
+
+				try {
+					await setTimeout(delay, undefined, { signal: abortSignal });
+				} catch (timeoutErr) {
+					if (abortSignal?.aborted) {
+						throw new DOMException("Aborted", "AbortError");
+					}
+					throw timeoutErr;
+				}
+				continue;
+			}
+			throw err;
+		}
+	}
+
+	// This should be unreachable - the loop handles all attempts including the final one
+	throw new Error("Unreachable: retry loop exited unexpectedly");
 }
 
 function logHeaders(headers: Headers) {
@@ -158,8 +252,9 @@ export async function fetchInternal<ResponseType>(
 	init: RequestInit = {},
 	queryParams?: URLSearchParams,
 	abortSignal?: AbortSignal,
-	apiToken?: ApiCredentials
-): Promise<{ response: ResponseType; status: number }> {
+	apiToken?: ApiCredentials,
+	retryConfig?: RetryConfig
+): Promise<{ response: ResponseType; status: number; retryAfter?: number }> {
 	const method = init.method ?? "GET";
 	const response = await performApiFetch(
 		complianceConfig,
@@ -167,7 +262,8 @@ export async function fetchInternal<ResponseType>(
 		init,
 		queryParams,
 		abortSignal,
-		apiToken
+		apiToken,
+		retryConfig
 	);
 	const jsonText = await response.text();
 	logger.debug(
@@ -178,6 +274,9 @@ export async function fetchInternal<ResponseType>(
 	logHeaders(response.headers);
 	logger.debugWithSanitization("RESPONSE:", jsonText);
 	logger.debug("-- END CF API RESPONSE");
+
+	// Parse Retry-After header for potential use in error handling
+	const retryAfter = parseRetryAfter(response.headers.get("Retry-After"));
 
 	// HTTP 204 and HTTP 205 responses do not return a body. We need to special-case this
 	// as otherwise parseJSON will throw an error back to the user.
@@ -190,12 +289,13 @@ export async function fetchInternal<ResponseType>(
 				messages: [],
 			} as ResponseType,
 			status: response.status,
+			retryAfter,
 		};
 	}
 
 	try {
 		const json = parseJSON(jsonText) as ResponseType;
-		return { response: json, status: response.status };
+		return { response: json, status: response.status, retryAfter };
 	} catch {
 		throw new APIError({
 			text: "Received a malformed response from the API",
@@ -208,6 +308,7 @@ export async function fetchInternal<ResponseType>(
 				},
 			],
 			status: response.status,
+			retryAfter,
 		});
 	}
 }

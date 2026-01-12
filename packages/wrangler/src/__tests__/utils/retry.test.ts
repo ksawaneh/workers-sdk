@@ -55,7 +55,39 @@ describe("retryOnAPIFailure", () => {
 		`);
 	});
 
-	it("should not retry non-5xx errors", async () => {
+	it("should retry 429 rate limit errors", async () => {
+		let attempts = 0;
+
+		await retryOnAPIFailure(() => {
+			attempts++;
+			if (attempts < 3) {
+				throw new APIError({ status: 429, text: "429 rate limited" });
+			}
+		});
+		expect(attempts).toBe(3);
+		expect(getRetryAndErrorLogs(std.debug)).toMatchInlineSnapshot(`
+			Array [
+			  "Retrying API call after error...",
+			  "APIError: 429 rate limited",
+			  "Retrying API call after error...",
+			  "APIError: 429 rate limited",
+			]
+		`);
+	});
+
+	it("should throw 429 error after all retries fail", async () => {
+		let attempts = 0;
+
+		await expect(() =>
+			retryOnAPIFailure(() => {
+				attempts++;
+				throw new APIError({ status: 429, text: "429 rate limited" });
+			})
+		).rejects.toMatchInlineSnapshot(`[APIError: 429 rate limited]`);
+		expect(attempts).toBe(3);
+	});
+
+	it("should not retry non-retryable 4xx errors", async () => {
 		let attempts = 0;
 
 		await expect(() =>

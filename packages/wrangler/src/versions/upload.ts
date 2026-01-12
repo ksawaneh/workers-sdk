@@ -63,7 +63,6 @@ import { getRules } from "../utils/getRules";
 import { getScriptName } from "../utils/getScriptName";
 import { parseConfigPlacement } from "../utils/placement";
 import { printBindings } from "../utils/print-bindings";
-import { retryOnAPIFailure } from "../utils/retry";
 import { useServiceEnvironments } from "../utils/useServiceEnvironments";
 import { isWorkerNotFoundError } from "../utils/worker-not-found-error";
 import { patchNonVersionedScriptSettings } from "./api";
@@ -769,19 +768,18 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 
 			// Upload the version.
 			try {
-				const result = await retryOnAPIFailure(async () =>
-					fetchResult<{
-						id: string;
-						startup_time_ms: number;
-						metadata: {
-							has_preview: boolean;
-						};
-					}>(config, `${workerUrl}/versions`, {
-						method: "POST",
-						body: workerBundle,
-						headers: await getMetricsUsageHeaders(config.send_metrics),
-					})
-				);
+				// Note: fetchResult automatically retries on 429/5xx via performApiFetch
+				const result = await fetchResult<{
+					id: string;
+					startup_time_ms: number;
+					metadata: {
+						has_preview: boolean;
+					};
+				}>(config, `${workerUrl}/versions`, {
+					method: "POST",
+					body: workerBundle,
+					headers: await getMetricsUsageHeaders(config.send_metrics),
+				});
 
 				logger.log("Worker Startup Time:", result.startup_time_ms, "ms");
 				bindingsPrinted = true;

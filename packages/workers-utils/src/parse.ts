@@ -51,24 +51,47 @@ export class ParseError extends UserError implements Message {
 // Therefore, allow particular `ParseError`s to be marked `reportable`.
 export class APIError extends ParseError {
 	#status?: number;
+	#retryAfter?: number;
 	code?: number;
 	accountTag?: string;
 
-	constructor({ status, ...rest }: Message & { status?: number }) {
+	constructor({
+		status,
+		retryAfter,
+		...rest
+	}: Message & { status?: number; retryAfter?: number }) {
 		super(rest);
 		this.name = this.constructor.name;
 		this.#status = status;
+		this.#retryAfter = retryAfter;
 	}
 
-	isGatewayError() {
+	get status(): number | undefined {
+		return this.#status;
+	}
+
+	get retryAfter(): number | undefined {
+		return this.#retryAfter;
+	}
+
+	isGatewayError(): boolean {
 		if (this.#status !== undefined) {
 			return [524].includes(this.#status);
 		}
 		return false;
 	}
 
-	isRetryable() {
-		return String(this.#status).startsWith("5");
+	isRateLimited(): boolean {
+		return this.#status === 429;
+	}
+
+	isRetryable(): boolean {
+		if (this.#status === undefined) {
+			return false;
+		}
+		// 5xx server errors OR 429 rate limits are retryable
+		const is5xx = this.#status >= 500 && this.#status < 600;
+		return is5xx || this.isRateLimited();
 	}
 
 	// Allow `APIError`s to be marked as handled.

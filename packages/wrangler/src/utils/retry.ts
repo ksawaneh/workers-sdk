@@ -4,14 +4,20 @@ import chalk from "chalk";
 import { logger } from "../logger";
 
 const MAX_ATTEMPTS = 3;
+
 /**
  * Wrap around calls to the Cloudflare API to automatically retry
- * calls that result in a 5xx error code, indicating an API failure.
+ * calls that result in a retryable error (5xx or 429).
  *
- * Retries will back off at a rate of 1000ms per retry, with a 0ms delay for the first retry
+ * Note: This function is maintained for backwards compatibility.
+ * The core fetch layer (performApiFetch) now handles retries automatically.
  *
- * Note: this will not retry 4xx or other failures, as those are
- * likely legitimate user error.
+ * Retries will back off at a rate of 1000ms per retry, with a 0ms delay for the first retry.
+ *
+ * This function will retry:
+ * - 5xx server errors
+ * - 429 rate limit errors (respects Retry-After header via APIError.retryAfter)
+ * - TypeError (network failures)
  */
 export async function retryOnAPIFailure<T>(
 	action: () => T | Promise<T>,
@@ -24,6 +30,10 @@ export async function retryOnAPIFailure<T>(
 		if (err instanceof APIError) {
 			if (!err.isRetryable()) {
 				throw err;
+			}
+			// Use Retry-After header if available (in seconds, convert to ms)
+			if (err.retryAfter !== undefined && err.retryAfter > 0) {
+				backoff = Math.max(backoff, err.retryAfter * 1000);
 			}
 		} else if (!(err instanceof TypeError)) {
 			throw err;

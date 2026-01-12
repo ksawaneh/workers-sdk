@@ -64,7 +64,6 @@ import { downloadWorkerConfig } from "../utils/download-worker-config";
 import { helpIfErrorIsSizeOrScriptStartup } from "../utils/friendly-validator-errors";
 import { parseConfigPlacement } from "../utils/placement";
 import { printBindings } from "../utils/print-bindings";
-import { retryOnAPIFailure } from "../utils/retry";
 import { isWorkerNotFoundError } from "../utils/worker-not-found-error";
 import {
 	createDeployment,
@@ -945,16 +944,15 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 				// If we're using the new APIs, first upload the version
 				if (canUseNewVersionsDeploymentsApi) {
 					// Upload new version
-					const versionResult = await retryOnAPIFailure(async () =>
-						fetchResult<ApiVersion>(
-							config,
-							`/accounts/${accountId}/workers/scripts/${scriptName}/versions`,
-							{
-								method: "POST",
-								body: workerBundle,
-								headers: await getMetricsUsageHeaders(config.send_metrics),
-							}
-						)
+					// Note: fetchResult automatically retries on 429/5xx via performApiFetch
+					const versionResult = await fetchResult<ApiVersion>(
+						config,
+						`/accounts/${accountId}/workers/scripts/${scriptName}/versions`,
+						{
+							method: "POST",
+							body: workerBundle,
+							headers: await getMetricsUsageHeaders(config.send_metrics),
+						}
 					);
 
 					// Deploy new version to 100%
@@ -1000,28 +998,27 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 						startup_time_ms: versionResult.startup_time_ms,
 					};
 				} else {
-					result = await retryOnAPIFailure(async () =>
-						fetchResult<{
-							id: string | null;
-							etag: string | null;
-							pipeline_hash: string | null;
-							mutable_pipeline_id: string | null;
-							deployment_id: string | null;
-							startup_time_ms: number;
-						}>(
-							config,
-							workerUrl,
-							{
-								method: "PUT",
-								body: workerBundle,
-								headers: await getMetricsUsageHeaders(config.send_metrics),
-							},
-							new URLSearchParams({
-								// pass excludeScript so the whole body of the
-								// script doesn't get included in the response
-								excludeScript: "true",
-							})
-						)
+					// Note: fetchResult automatically retries on 429/5xx via performApiFetch
+					result = await fetchResult<{
+						id: string | null;
+						etag: string | null;
+						pipeline_hash: string | null;
+						mutable_pipeline_id: string | null;
+						deployment_id: string | null;
+						startup_time_ms: number;
+					}>(
+						config,
+						workerUrl,
+						{
+							method: "PUT",
+							body: workerBundle,
+							headers: await getMetricsUsageHeaders(config.send_metrics),
+						},
+						new URLSearchParams({
+							// pass excludeScript so the whole body of the
+							// script doesn't get included in the response
+							excludeScript: "true",
+						})
 					);
 
 					// Update service and environment tags when using environments

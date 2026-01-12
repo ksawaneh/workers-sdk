@@ -1,6 +1,5 @@
 import { configFileName, UserError } from "@cloudflare/workers-utils";
 import { fetchListResult } from "./cfetch";
-import { retryOnAPIFailure } from "./utils/retry";
 import type { ComplianceConfig, Route } from "@cloudflare/workers-utils";
 
 /**
@@ -175,16 +174,14 @@ async function getZoneIdFromHost(
 		if (!zoneIdCache.has(cacheKey)) {
 			zoneIdCache.set(
 				cacheKey,
-				retryOnAPIFailure(() =>
-					fetchListResult<{ id: string }>(
-						complianceConfig,
-						`/zones`,
-						{},
-						new URLSearchParams({
-							name: hostPieces.join("."),
-							"account.id": from.accountId,
-						})
-					)
+				fetchListResult<{ id: string }>(
+					complianceConfig,
+					`/zones`,
+					{},
+					new URLSearchParams({
+						name: hostPieces.join("."),
+						"account.id": from.accountId,
+					})
 				).then((zones) => zones[0]?.id ?? null)
 			);
 		}
