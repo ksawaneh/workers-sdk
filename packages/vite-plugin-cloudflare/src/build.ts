@@ -35,14 +35,10 @@ export function createBuildApp(
 			return;
 		}
 
-		const workerEnvironments = [
-			...resolvedPluginConfig.environmentNameToWorkerMap.keys(),
-		].map((environmentName) => {
-			const environment = builder.environments[environmentName];
-			assert(environment, `"${environmentName}" environment not found`);
-
-			return environment;
-		});
+		const workerEnvironments = getWorkerBuildEnvironments(
+			resolvedPluginConfig,
+			builder
+		);
 
 		await Promise.all(
 			workerEnvironments.map((environment) => builder.build(environment))
@@ -168,6 +164,31 @@ function getImportedAssetPaths(viteManifest: vite.Manifest): Set<string> {
 	);
 
 	return new Set(assetPaths);
+}
+
+/**
+ * Gets all Worker build environments, including child environments.
+ */
+export function getWorkerBuildEnvironments(
+	resolvedPluginConfig: WorkersResolvedConfig,
+	builder: vite.ViteBuilder
+): vite.BuildEnvironment[] {
+	const workerEnvironmentNames = [
+		...resolvedPluginConfig.environmentNameToWorkerMap.keys(),
+	].flatMap((environmentName) => {
+		const childEnvironmentNames =
+			resolvedPluginConfig.environmentNameToChildEnvironmentNamesMap.get(
+				environmentName
+			) ?? [];
+		return [environmentName, ...childEnvironmentNames];
+	});
+
+	return workerEnvironmentNames.map((environmentName) => {
+		const environment = builder.environments[environmentName];
+		assert(environment, `"${environmentName}" environment not found`);
+
+		return environment;
+	});
 }
 
 /**

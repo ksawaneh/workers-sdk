@@ -1,7 +1,11 @@
 import assert from "node:assert";
 import * as path from "node:path";
 import { hasAssetsConfigChanged } from "../asset-config";
-import { createBuildApp, removeAssetsField } from "../build";
+import {
+	createBuildApp,
+	getWorkerBuildEnvironments,
+	removeAssetsField,
+} from "../build";
 import {
 	cloudflareBuiltInModules,
 	createCloudflareEnvironmentOptions,
@@ -102,14 +106,10 @@ export const configPlugin = createPlugin("config", (ctx) => {
 					return;
 				}
 
-				const workerEnvironments = [
-					...ctx.resolvedPluginConfig.environmentNameToWorkerMap.keys(),
-				].map((environmentName) => {
-					const environment = builder.environments[environmentName];
-					assert(environment, `"${environmentName}" environment not found`);
-
-					return environment;
-				});
+				const workerEnvironments = getWorkerBuildEnvironments(
+					ctx.resolvedPluginConfig,
+					builder
+				);
 
 				// Build any Worker environments that haven't already been built
 				await Promise.all(
