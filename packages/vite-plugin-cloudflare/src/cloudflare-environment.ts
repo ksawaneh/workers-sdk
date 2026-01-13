@@ -202,6 +202,7 @@ export function createCloudflareEnvironmentOptions({
 	mode,
 	environmentName,
 	isEntryWorker,
+	isParentEnvironment,
 	hasNodeJsCompat,
 }: {
 	workerConfig: ResolvedWorkerConfig;
@@ -209,6 +210,7 @@ export function createCloudflareEnvironmentOptions({
 	mode: vite.ConfigEnv["mode"];
 	environmentName: string;
 	isEntryWorker: boolean;
+	isParentEnvironment: boolean;
 	hasNodeJsCompat: boolean;
 }): vite.EnvironmentOptions {
 	const define = getProcessEnvReplacements(hasNodeJsCompat, mode);
@@ -242,16 +244,16 @@ export function createCloudflareEnvironmentOptions({
 			...(isRolldown
 				? {
 						rolldownOptions: {
-							...rollupOptions,
+							...(isParentEnvironment ? rollupOptions : {}),
 							platform: "neutral",
 							resolve: {
 								extensions: resolveExtensions,
 							},
 						},
 					}
-				: {
-						rollupOptions,
-					}),
+				: isParentEnvironment
+					? { rollupOptions }
+					: {}),
 		},
 		optimizeDeps: {
 			// Note: ssr pre-bundling is opt-in and we need to enable it by setting `noDiscovery` to false

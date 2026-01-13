@@ -171,6 +171,7 @@ function getEnvironmentsConfig(
 						environmentName,
 						isEntryWorker:
 							environmentName === workersConfig.entryWorkerEnvironmentName,
+						isParentEnvironment: true,
 					}),
 				] as const;
 
@@ -182,6 +183,7 @@ function getEnvironmentsConfig(
 								...sharedOptions,
 								environmentName: childEnvironmentName,
 								isEntryWorker: false,
+								isParentEnvironment: false,
 							}),
 						] as const
 				);
