@@ -1,5 +1,11 @@
 # @cloudflare/unenv-preset
 
+## 2.10.0
+
+### Minor Changes
+
+- [#11701](https://github.com/cloudflare/workers-sdk/pull/11701) [`fec8f5b`](https://github.com/cloudflare/workers-sdk/commit/fec8f5b82e0bb64400bbfcced302748dbe9a3062) Thanks [@petebacondarwin](https://github.com/petebacondarwin)! - Add support for native `node:dgram` module when the `enable_nodejs_dgram_module` compatibility flag is enabled. This feature is currently experimental and requires both the `enable_nodejs_dgram_module` and `experimental` compatibility flags to be set.
+
 ## 2.9.0
 
 ### Minor Changes
